@@ -148,8 +148,26 @@
 
     function renderArtist(artist) {
       if (!artist) return 'No artist data';
-      const img = artist.images && artist.images[0] ? `<img src="${artist.images[0].url}" alt="${artist.name}" width="128" />` : '';
-      return `${img}<div><strong>${artist.name}</strong><p>Genres: ${artist.genres.slice(0,3).join(', ')}</p><p>Followers: ${artist.followers.total.toLocaleString()}</p><p><a href="${artist.external_urls.spotify}" target="_blank">Open in Spotify</a></p></div>`;
+
+      const img =
+        artist.images && artist.images[0]
+          ? `<img src="${artist.images[0].url}" alt="${artist.name}" width="128" />`
+          : '';
+
+      const genres =
+        artist.genres && artist.genres.length > 0
+          ? artist.genres.slice(0, 3).join(', ')
+          : 'No genre data available';
+
+      return `
+        ${img}
+        <div>
+          <strong>${artist.name}</strong>
+          <p>Genres: ${genres}</p>
+          <p>Followers: ${artist.followers.total.toLocaleString()}</p>
+          <p><a href="${artist.external_urls.spotify}" target="_blank">Open in Spotify</a></p>
+        </div>
+      `;
     }
 
     function renderTrack(track) {
