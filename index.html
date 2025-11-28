@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>My Top Spotify Artist & Song — HTML Only</title>
+</head>
+<body>
+  <main>
+    <h1>🎧 My Top Spotify Artist & Song</h1>
+
+    <div id="not-logged">
+      <p>Press the button to connect your Spotify account (uses Spotify Authorization Code + PKCE).</p>
+      <button id="login">Connect with Spotify</button>
+    </div>
+
+    <section id="top-info" style="display:none;">
+      <button id="logout" style="float:right;">Logout</button>
+      <h2>Top Artist</h2>
+      <div id="artist-card">Loading...</div>
+
+      <h2>Top Track</h2>
+      <div id="track-card">Loading...</div>
+    </section>
+
+    <footer>
+      <p style="font-size:0.9rem;color:#666;">Built with only a single HTML file (JS inside). Add CSS in a separate file later.</p>
+    </footer>
+  </main>
+
+  <script>
+    // ======= CONFIG — REPLACE THESE =======
+    const CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID'; // <-- put your Spotify app client id here
+    const REDIRECT_URI = 'http://localhost:5500/index.html'; // <-- must match redirect URI in your Spotify Dashboard
+    // ======================================
+
+    const SCOPES = 'user-top-read';
+
+    // Helpers for PKCE
+    function base64UrlEncode(bytes) {
+      return btoa(String.fromCharCode.apply(null, new Uint8Array(bytes)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+    }
+
+    async function sha256(plain) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(plain);
+      return await crypto.subtle.digest('SHA-256', data);
+    }
+
+    async function generateCodeChallenge(verifier) {
+      const hashed = await sha256(verifier);
+      return base64UrlEncode(hashed);
+    }
+
+    function generateRandomString(length = 128) {
+      const array = new Uint8Array(length);
+      crypto.getRandomValues(array);
+      return Array.from(array).map(n => ('0' + n.toString(16)).slice(-2)).join('');
+    }
+
+    // Build authorize URL and redirect
+    async function login() {
+      const codeVerifier = generateRandomString(64);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+      sessionStorage.setItem('spotify_code_verifier', codeVerifier);
+
+      const params = new URLSearchParams({
+        client_id: CLIENT_ID,
+        response_type: 'code',
+        redirect_uri: REDIRECT_URI,
+        code_challenge_method: 'S256',
+        code_challenge: codeChallenge,
+        scope: SCOPES,
+      });
+
+      const url = `https://accounts.spotify.com/authorize?${params.toString()}`;
+      window.location = url;
+    }
+
+    // Exchange code for token (Authorization Code + PKCE)
+    async function exchangeCodeForToken(code) {
+      const codeVerifier = sessionStorage.getItem('spotify_code_verifier');
+      if (!codeVerifier) throw new Error('Missing code verifier. Start login again.');
+
+      const body = new URLSearchParams({
+        client_id: CLIENT_ID,
+        grant_type: 'authorization_code',
+        code: code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: codeVerifier,
+      });
+
+      const resp = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+
+      if (!resp.ok) throw new Error('Token exchange failed: ' + resp.status);
+      return await resp.json(); // contains access_token, refresh_token, expires_in
+    }
+
+    // Fetch user's top artist and track
+    async function fetchTopData(accessToken) {
+      const headers = { Authorization: `Bearer ${accessToken}` };
+
+      const [artistsResp, tracksResp] = await Promise.all([
+        fetch('https://api.spotify.com/v1/me/top/artists?limit=1', { headers }),
+        fetch('https://api.spotify.com/v1/me/top/tracks?limit=1', { headers }),
+      ]);
+
+      if (!artistsResp.ok || !tracksResp.ok) {
+        throw new Error('Failed to fetch top data');
+      }
+
+      const artistsData = await artistsResp.json();
+      const tracksData = await tracksResp.json();
+      return { artists: artistsData.items || [], tracks: tracksData.items || [] };
+    }
+
+    // UI helpers
+    function showLoggedOut() {
+      document.getElementById('not-logged').style.display = '';
+      document.getElementById('top-info').style.display = 'none';
+    }
+
+    function showLoggedIn() {
+      document.getElementById('not-logged').style.display = 'none';
+      document.getElementById('top-info').style.display = '';
+    }
+
+    function el(html) {
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      return div.firstElementChild || div.firstChild;
+    }
+
+    function renderArtist(artist) {
+      if (!artist) return 'No artist data';
+      const img = artist.images && artist.images[0] ? `<img src="${artist.images[0].url}" alt="${artist.name}" width="128" />` : '';
+      return `${img}<div><strong>${artist.name}</strong><p>Genres: ${artist.genres.slice(0,3).join(', ')}</p><p>Followers: ${artist.followers.total.toLocaleString()}</p><p><a href="${artist.external_urls.spotify}" target="_blank">Open in Spotify</a></p></div>`;
+    }
+
+    function renderTrack(track) {
+      if (!track) return 'No track data';
+      const img = track.album && track.album.images && track.album.images[0] ? `<img src="${track.album.images[0].url}" alt="${track.name}" width="128" />` : '';
+      const artists = track.artists.map(a => a.name).join(', ');
+      return `${img}<div><strong>${track.name}</strong><p>By: ${artists}</p><p>Album: ${track.album.name}</p><p><a href="${track.external_urls.spotify}" target="_blank">Open in Spotify</a></p></div>`;
+    }
+
+    // Handle redirect (after Spotify auth)
+    async function handleRedirectIfNeeded() {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get('code');
+      const error = url.searchParams.get('error');
+
+      if (error) {
+        alert('Spotify auth error: ' + error);
+        // clean url
+        url.searchParams.delete('error');
+        history.replaceState(null, '', url.pathname);
+        return;
+      }
+
+      if (!code) return; // nothing to do
+
+      try {
+        const tokenResp = await exchangeCodeForToken(code);
+        const accessToken = tokenResp.access_token;
+        sessionStorage.setItem('spotify_access_token', accessToken);
+
+        // clean URL to remove code param
+        url.searchParams.delete('code');
+        history.replaceState(null, '', url.pathname);
+
+        await loadAndRender(accessToken);
+      } catch (err) {
+        console.error(err);
+        alert('Login failed: ' + err.message);
+      }
+    }
+
+    async function loadAndRender(accessToken) {
+      try {
+        showLoggedIn();
+        document.getElementById('artist-card').textContent = 'Loading...';
+        document.getElementById('track-card').textContent = 'Loading...';
+
+        const data = await fetchTopData(accessToken);
+        const artist = (data.artists && data.artists[0]) || null;
+        const track = (data.tracks && data.tracks[0]) || null;
+
+        const artistCard = document.getElementById('artist-card');
+        artistCard.innerHTML = renderArtist(artist);
+
+        const trackCard = document.getElementById('track-card');
+        trackCard.innerHTML = renderTrack(track);
+      } catch (err) {
+        console.error(err);
+        // likely token expired or insufficient scopes
+        alert('Could not load top data. Try logging in again.');
+        logout();
+      }
+    }
+
+    function logout() {
+      sessionStorage.removeItem('spotify_access_token');
+      sessionStorage.removeItem('spotify_code_verifier');
+      showLoggedOut();
+    }
+
+    // Event wiring
+    document.getElementById('login').addEventListener('click', () => {
+      if (!CLIENT_ID || CLIENT_ID === 'YOUR_SPOTIFY_CLIENT_ID') {
+        alert('Please set CLIENT_ID in the HTML before using this.');
+        return;
+      }
+      login();
+    });
+
+    document.getElementById('logout').addEventListener('click', () => {
+      logout();
+    });
+
+    // On load: if we have stored access token, use it; otherwise handle redirect if code param present
+    (async () => {
+      const accessToken = sessionStorage.getItem('spotify_access_token');
+      if (accessToken) {
+        await loadAndRender(accessToken);
+        return;
+      }
+
+      await handleRedirectIfNeeded();
+
+      // show logged out UI if nothing else
+      showLoggedOut();
+    })();
+  </script>
+</body>
+</html>
