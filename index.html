@@ -21,20 +21,20 @@
 
       <h2>Top Track</h2>
       <div id="track-card">Loading...</div>
+      <h2>Estimated Listening Time (Last 50 Plays)</h2>
+      <div id="listening-time">Loading...</div>
     </section>
 
-    <footer>
-      <p style="font-size:0.9rem;color:#666;">Built with only a single HTML file (JS inside). Add CSS in a separate file later.</p>
-    </footer>
+
   </main>
 
   <script>
     // ======= CONFIG — REPLACE THESE =======
-    const CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID'; // <-- put your Spotify app client id here
+    const CLIENT_ID = 'becff2b830bc47eb94776786946edf77'; // <-- put your Spotify app client id here
     const REDIRECT_URI = 'http://127.0.0.1:5500/index.html'; // <-- must match redirect URI in your Spotify Dashboard
     // ======================================
 
-    const SCOPES = 'user-top-read';
+    const SCOPES = 'user-top-read user-read-recently-played';
 
     // Helpers for PKCE
     function base64UrlEncode(bytes) {
@@ -108,18 +108,25 @@
     async function fetchTopData(accessToken) {
       const headers = { Authorization: `Bearer ${accessToken}` };
 
-      const [artistsResp, tracksResp] = await Promise.all([
+      const [artistsResp, tracksResp, recentResp] = await Promise.all([
         fetch('https://api.spotify.com/v1/me/top/artists?limit=1', { headers }),
         fetch('https://api.spotify.com/v1/me/top/tracks?limit=1', { headers }),
+        fetch('https://api.spotify.com/v1/me/player/recently-played?limit=50', { headers }),
       ]);
 
-      if (!artistsResp.ok || !tracksResp.ok) {
-        throw new Error('Failed to fetch top data');
+      if (!artistsResp.ok || !tracksResp.ok || !recentResp.ok) {
+        throw new Error('Failed to fetch Spotify data');
       }
 
       const artistsData = await artistsResp.json();
       const tracksData = await tracksResp.json();
-      return { artists: artistsData.items || [], tracks: tracksData.items || [] };
+      const recentData = await recentResp.json();
+
+      return {
+        artists: artistsData.items || [],
+        tracks: tracksData.items || [],
+        recent: recentData.items || [],
+      };
     }
 
     // UI helpers
@@ -189,6 +196,7 @@
         showLoggedIn();
         document.getElementById('artist-card').textContent = 'Loading...';
         document.getElementById('track-card').textContent = 'Loading...';
+        document.getElementById('listening-time').textContent = 'Loading...';
 
         const data = await fetchTopData(accessToken);
         const artist = (data.artists && data.artists[0]) || null;
@@ -199,9 +207,26 @@
 
         const trackCard = document.getElementById('track-card');
         trackCard.innerHTML = renderTrack(track);
+
+        // Calculate estimated listening time from last 50 plays
+        let totalMs = 0;
+        data.recent.forEach(item => {
+          if (item.track && item.track.duration_ms) {
+            totalMs += item.track.duration_ms;
+          }
+        });
+
+        const totalHours = (totalMs / (1000 * 60 * 60)).toFixed(2);
+        const listeningDiv = document.getElementById('listening-time');
+
+        if (data.recent.length === 0) {
+          listeningDiv.textContent = 'No recent listening data available.';
+        } else {
+          listeningDiv.innerHTML = `<strong>${totalHours} hours</strong> (from your last 50 plays)`;
+        }
+
       } catch (err) {
         console.error(err);
-        // likely token expired or insufficient scopes
         alert('Could not load top data. Try logging in again.');
         logout();
       }
